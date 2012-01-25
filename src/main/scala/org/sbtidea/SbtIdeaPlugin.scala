@@ -49,15 +49,35 @@ object SbtIdeaPlugin extends Plugin {
 
     val uri = buildStruct.root
     val name: Option[String] = ideaProjectName in extracted.currentRef get buildStruct.data
-    val projectList = buildUnit.defined.flatMap {
-      case (id, proj) =>
-        var subs = for {
-          ref <- proj.aggregate
-          subProj <- Project.getProject(ref, buildStruct)
-        } yield (ref -> subProj)
+    val projectList = {
+      def getTuplesFromProject(proj: Option[ResolvedProject]): List[(ProjectRef, ResolvedProject)] = {
+        def processAggregates(aggregates: Seq[ProjectRef]): List[(ProjectRef, ResolvedProject)] = {
+          aggregates match {
+            case Nil => List.empty
+            case ref :: tail => {
+              val subProjOption: Option[ResolvedProject] = Project.getProject(ref, buildStruct)
+              subProjOption match {
+                case Some(subProj) => {
+                  (ref -> subProj) +: processAggregates(tail) ++: getTuplesFromProject(subProjOption)
+                }
+                case None => processAggregates(tail)
+              }
+            }
+          }
+        }
 
-        (ProjectRef(uri, id) -> proj) :: subs.toList
-    }    
+        proj match {
+          case Some(proj) => {
+            processAggregates(proj.aggregate)
+          }
+          case None => List.empty
+        }
+      }
+
+      buildUnit.defined.flatMap {
+        case (id, proj) => (ProjectRef(uri, id) -> proj) :: getTuplesFromProject(Some(proj)).toList
+      }
+    }
 
     def ignoreModule(projectRef: ProjectRef): Boolean = {
       (ideaIgnoreModule in projectRef get buildStruct.data).getOrElse(false)
